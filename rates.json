@@ -1,0 +1,14 @@
+{
+  "success": true,
+  "rates": {
+    "USD": 75000,
+    "EUR": 81000,
+    "AED": 21000,
+    "CNY": 10500,
+    "XAU": {
+      "local_per_ounce": 130000000,
+      "local_per_gram_24k": 4200000,
+      "local_per_gram_18k": 3150000
+    }
+  }
+}
