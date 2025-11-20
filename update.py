@@ -8,7 +8,7 @@ def fetch_rates():
         "EUR": 81200,
         "AED": 21100,
         "CNY": 10600,
-        "XUA": {
+        "XAU": {
             "local_per_ounce": 131000000,
             "local_per_gram_24k": 4250000,
             "local_per_gram_18k": 3187500
