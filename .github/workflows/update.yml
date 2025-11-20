@@ -1,0 +1,30 @@
+name: Update Rates Automatically
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Run update script
+      run: python update.py
+
+    - name: Commit changes
+      run: |
+        git config --local user.email "auto@github.com"
+        git config --local user.name "Auto Updater"
+        git add rates.json
+        git commit -m "Auto update rates" || echo "No changes to commit"
+        git push
