@@ -1,16 +1,15 @@
 import json
 import urllib.request
-import math
 
 TGJU_JSON_URL = "https://call1.tgju.org/ajax.json"
 
-# این تابع یک سیمبل از tgju را گرفته و قیمتش را به صورت float (بدون ویرگول) برمی‌گرداند
+
 def get_symbol_price(current, symbol_key):
+    """قیمت یک نماد از tgju را (به صورت float) برمی‌گرداند."""
     item = current.get(symbol_key)
     if not item:
         return None
 
-    # در اکثر اسکریپت‌ها قیمت در فیلد p یا pn است (مثل "1,234,567")
     for key in ["p", "pn", "price"]:
         if key in item and item[key]:
             s = str(item[key]).replace(",", "").strip()
@@ -19,6 +18,13 @@ def get_symbol_price(current, symbol_key):
             except ValueError:
                 pass
     return None
+
+
+def to_toman(value):
+    """تبدیل ریال به تومان (تقسیم بر ۱۰)."""
+    if value is None:
+        return None
+    return value / 10.0
 
 
 def main():
@@ -31,43 +37,43 @@ def main():
 
     data = json.loads(raw)
 
-    # بسته به ساختار، ممکن است data["current"] یا data["results"]["other"]["current"] باشد.
-    # رایج‌ترین حالت:
+    # معمولاً data["current"] داریم
     current = data.get("current") or data
 
-    # ⚠️⚠️ این اسم‌ها را اگر لازم شد با اسم دقیق سیمبل‌هایی که در JSON می‌بینی عوض کن ⚠️⚠️
-    # دلار آزاد
-    usd_local = get_symbol_price(current, "price_dollar_rl")
-    # یورو
-    eur_local = get_symbol_price(current, "price_eur")
-    # درهم
-    aed_local = get_symbol_price(current, "price_aed")
-    # یوان چین (اگر نبود بعداً می‌تونیم حذفش کنیم)
-    cny_local = get_symbol_price(current, "price_cny")
+    # ⚠ اگر اسم کلیدها فرق داشت، فقط این رشته‌ها را عوض کن
+    usd_rial = get_symbol_price(current, "price_dollar_rl")
+    eur_rial = get_symbol_price(current, "price_eur")
+    aed_rial = get_symbol_price(current, "price_aed")
+    cny_rial = get_symbol_price(current, "price_cny")
+    gram18_rial = get_symbol_price(current, "geram18")
 
-    # طلای ۱۸ عیار (گرمی)
-    gram18_local = get_symbol_price(current, "geram18")
-
-    if usd_local is None:
+    if usd_rial is None:
         raise RuntimeError("Could not read USD price from TGJU (check symbol_key for USD).")
 
-    # اگر یورو یا درهم یا یوان پیدا نشد، None می‌مانند و بعد در JSON نمی‌گذاریم
-    # محاسبه‌ی طلای ۲۴ عیار و اونس بر اساس طلای ۱۸ عیار بازار ایران:
+    # تبدیل همه‌چیز به تومان
+    usd_local = to_toman(usd_rial)
+    eur_local = to_toman(eur_rial)
+    aed_local = to_toman(aed_rial)
+    cny_local = to_toman(cny_rial)
+    gram18_local = to_toman(gram18_rial)
+
+    # محاسبه طلا بر اساس قیمت ۱۸ عیار به تومان
     xau_struct = None
     if gram18_local and gram18_local > 0:
         per_gram_18k = gram18_local
         per_gram_24k = per_gram_18k * (24.0 / 18.0)
-        per_ounce_local = per_gram_24k * 31.1034768
+        per_ounce_local = per_gram_24k * 31.1034768  # تومان برای هر اونس
+        usd_per_ounce = per_ounce_local / usd_local  # قیمت اونس به دلار
+
         xau_struct = {
-            "usd_per_ounce": round(per_ounce_local / usd_local, 4),
-            "local_per_ounce": round(per_ounce_local, 2),
-            "local_per_gram_24k": round(per_gram_24k, 2),
-            "local_per_gram_18k": round(per_gram_18k, 2),
+            "usd_per_ounce": round(usd_per_ounce, 2),       # اونس بر حسب دلار
+            "local_per_ounce": round(per_ounce_local, 2),   # اونس بر حسب تومان
+            "local_per_gram_24k": round(per_gram_24k, 2),   # گرم ۲۴ عیار (تومان)
+            "local_per_gram_18k": round(per_gram_18k, 2),   # گرم ۱۸ عیار (تومان)
         }
 
-    # نرخ‌های تبدیل (بازار ایران → نسبت به دلار)
+    # نسبت‌های تبدیل (برای بعداً، اگر لازم شد)
     fx = {}
-
     if eur_local and eur_local > 0:
         fx["EURUSD"] = round(eur_local / usd_local, 6)
     if aed_local and aed_local > 0:
@@ -75,7 +81,7 @@ def main():
     if xau_struct:
         fx["XAUUSD"] = round(xau_struct["local_per_ounce"] / usd_local, 4)
 
-    # ساختار خروجی‌ای که افزونه‌ی وردپرس ازش استفاده می‌کند
+    # ساختار rates بر پایه تومان
     rates = {
         "USD": round(usd_local, 2),
     }
@@ -88,15 +94,14 @@ def main():
     if xau_struct:
         rates["XAU"] = xau_struct
     if fx:
-        rates["FX"] = fx  # فعلاً افزونه‌ات این رو استفاده نمی‌کند، ولی برای آینده خوبه
+        rates["FX"] = fx  # فعلاً افزونه استفاده نمی‌کند، ولی برای آینده خوب است
 
     payload = {
         "success": True,
-        "source": "tgju.org unofficial ajax.json",
+        "source": "tgju.org unofficial ajax.json (Toman)",
         "rates": rates,
     }
 
-    # نوشتن در فایل rates.json
     with open("rates.json", "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
 
