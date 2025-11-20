@@ -21,10 +21,11 @@ def get_symbol_price(current, symbol_key):
 
 
 def to_toman(value):
-    """تبدیل ریال به تومان (تقسیم بر ۱۰)."""
+    """تبدیل مقدار خام tgju به تومان (این‌جا /100 می‌کنیم چون یک صفر اضافه داریم)."""
     if value is None:
         return None
-    return value / 10.0
+    return value / 100.0
+
 
 
 def main():
