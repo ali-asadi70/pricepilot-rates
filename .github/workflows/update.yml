@@ -25,6 +25,15 @@ jobs:
       run: |
         git config --local user.email "auto@github.com"
         git config --local user.name "Auto Updater"
+
+        # فقط اگر فایل عوض شده باشد، کامیت و پوش انجام بده
         git add rates.json
-        git commit -m "Auto update rates" || echo "No changes to commit"
-        git push
+
+        if git diff --cached --quiet; then
+          echo "No changes to commit, skip push"
+        else
+          git commit -m "Auto update rates"
+          # برای اطمینان، آخرین تغییرات ریموت را می‌گیرد
+          git pull --rebase origin main
+          git push origin HEAD:main
+        fi
