@@ -5,7 +5,20 @@ TGJU_JSON_URL = "https://call1.tgju.org/ajax.json"
 
 
 def get_symbol_price(current, symbol_key):
-    """قیمت یک نماد از tgju را (به صورت float) برمی‌گرداند."""
+    """
+    قیمت یک نماد از tgju را (به صورت float) برمی‌گرداند.
+    اگر symbol_key لیست باشد، به ترتیب هر کلید را امتحان می‌کند
+    و اولین مقداری که پیدا شد را برمی‌گرداند.
+    """
+    # اگر symbol_key یک iterable از کلیدهاست، آنها را یکی‌یکی امتحان کن
+    if isinstance(symbol_key, (list, tuple)):
+        for key in symbol_key:
+            val = get_symbol_price(current, key)
+            if val is not None:
+                return val
+        return None
+
+    # در حالت عادی symbol_key یک رشته است
     item = current.get(symbol_key)
     if not item:
         return None
@@ -27,7 +40,6 @@ def to_toman(value):
     return value / 100.0
 
 
-
 def main():
     print("Fetching data from TGJU ...")
     # ۱) گرفتن JSON از tgju
@@ -41,12 +53,15 @@ def main():
     # معمولاً data["current"] داریم
     current = data.get("current") or data
 
-    # ⚠ اگر اسم کلیدها فرق داشت، فقط این رشته‌ها را عوض کن
-    usd_rial = get_symbol_price(current, "price_dollar_rl")
-    eur_rial = get_symbol_price(current, "price_eur")
-    aed_rial = get_symbol_price(current, "price_aed")
-    cny_rial = get_symbol_price(current, "price_cny")
-    gram18_rial = get_symbol_price(current, "geram18")
+    # ⚠ اگر اسم کلیدها فرق داشت، ما چند گزینه را امتحان می‌کنیم
+    usd_rial = get_symbol_price(current, ["price_dollar_rl", "price_dollar", "price_dollar_rl2"])
+    eur_rial = get_symbol_price(current, ["price_eur", "price_euro", "price_eur_rl"])
+    aed_rial = get_symbol_price(current, ["price_aed", "price_dirham", "price_aed_rl"])
+    cny_rial = get_symbol_price(current, ["price_cny", "price_yuan", "price_cny_rl"])
+    # اضافه: تلاش برای پیدا کردن قیمت لیر (TRY) با چند کلید محتمل
+    try_rial = get_symbol_price(current, ["price_try", "price_tl", "price_toman_try", "price_tl_rl"])
+
+    gram18_rial = get_symbol_price(current, ["geram18", "gram18", "geram_18", "gram18_rl"])
 
     if usd_rial is None:
         raise RuntimeError("Could not read USD price from TGJU (check symbol_key for USD).")
@@ -56,6 +71,7 @@ def main():
     eur_local = to_toman(eur_rial)
     aed_local = to_toman(aed_rial)
     cny_local = to_toman(cny_rial)
+    try_local = to_toman(try_rial)
     gram18_local = to_toman(gram18_rial)
 
     # محاسبه طلا بر اساس قیمت ۱۸ عیار به تومان
@@ -79,6 +95,8 @@ def main():
         fx["EURUSD"] = round(eur_local / usd_local, 6)
     if aed_local and aed_local > 0:
         fx["AEDUSD"] = round(aed_local / usd_local, 6)
+    if try_local and try_local > 0:
+        fx["TRYUSD"] = round(try_local / usd_local, 6)
     if xau_struct:
         fx["XAUUSD"] = round(xau_struct["local_per_ounce"] / usd_local, 4)
 
@@ -92,6 +110,8 @@ def main():
         rates["AED"] = round(aed_local, 2)
     if cny_local and cny_local > 0:
         rates["CNY"] = round(cny_local, 2)
+    if try_local and try_local > 0:
+        rates["TRY"] = round(try_local, 2)
     if xau_struct:
         rates["XAU"] = xau_struct
     if fx:
