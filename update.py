@@ -3,6 +3,9 @@ import urllib.request
 
 TGJU_JSON_URL = "https://call1.tgju.org/ajax.json"
 
+# ضریب رایج مثقال شرعی (تقریباً) برای fallback
+MESGHAL_TO_GRAM_APPROX = 4.6083
+
 
 def get_symbol_price(current, symbol_key):
     """
@@ -61,7 +64,19 @@ def main():
     # اضافه: تلاش برای پیدا کردن قیمت لیر (TRY) با چند کلید محتمل
     try_rial = get_symbol_price(current, ["price_try", "price_tl", "price_toman_try", "price_tl_rl"])
 
+    # طلا ۱۸ عیار (باید بماند)
     gram18_rial = get_symbol_price(current, ["geram18", "gram18", "geram_18", "gram18_rl"])
+
+    # ✅ مثقال طلا (جایگزین ۲۴ عیار در خروجی)
+    # چون کلید دقیق ممکن است بسته به نسخه‌ها متفاوت باشد، چند حالت محتمل:
+    mesghal_rial = get_symbol_price(
+        current,
+        [
+            "mesghal", "mesghal_tala", "mesghal_gold", "mesghal18",
+            "mazanne", "mozanne", "mozanneh", "mashghal",
+            "price_mesghal", "price_mesghal_rl", "mesghal_rl"
+        ]
+    )
 
     if usd_rial is None:
         raise RuntimeError("Could not read USD price from TGJU (check symbol_key for USD).")
@@ -73,20 +88,35 @@ def main():
     cny_local = to_toman(cny_rial)
     try_local = to_toman(try_rial)
     gram18_local = to_toman(gram18_rial)
+    mesghal_local = to_toman(mesghal_rial)
 
-    # محاسبه طلا بر اساس قیمت ۱۸ عیار به تومان
+    # اگر مثقال مستقیم از TGJU پیدا نشد، برای اینکه سیستم از کار نیفته،
+    # یک fallback تقریباً نزدیک از روی گرم ۱۸ عیار می‌سازیم.
+    # (مسیر اصلی همچنان ajax.json است؛ این فقط کمک اضطراری است.)
+    mesghal_from_fallback = False
+    if (mesghal_local is None or mesghal_local <= 0) and (gram18_local and gram18_local > 0):
+        mesghal_local = gram18_local * MESGHAL_TO_GRAM_APPROX
+        mesghal_from_fallback = True
+
+    # محاسبه طلا بر اساس قیمت ۱۸ عیار به تومان (برای اونس و XAUUSD و ...)
     xau_struct = None
     if gram18_local and gram18_local > 0:
         per_gram_18k = gram18_local
-        per_gram_24k = per_gram_18k * (24.0 / 18.0)
-        per_ounce_local = per_gram_24k * 31.1034768  # تومان برای هر اونس
+        # همچنان برای محاسبه اونس نیاز داریم 24k را "داخلی" حساب کنیم،
+        # اما دیگر در خروجی به عنوان نرخ/واحد نمایش داده نمی‌شود.
+        per_gram_24k_internal = per_gram_18k * (24.0 / 18.0)
+        per_ounce_local = per_gram_24k_internal * 31.1034768  # تومان برای هر اونس
         usd_per_ounce = per_ounce_local / usd_local  # قیمت اونس به دلار
 
         xau_struct = {
             "usd_per_ounce": round(usd_per_ounce, 2),       # اونس بر حسب دلار
             "local_per_ounce": round(per_ounce_local, 2),   # اونس بر حسب تومان
-            "local_per_gram_24k": round(per_gram_24k, 2),   # گرم ۲۴ عیار (تومان)
+            # ✅ ۲۴ عیار حذف شد و به جایش مثقال آمد
+            "local_per_mesghal": round(mesghal_local, 2) if mesghal_local else None,
+            # ۱۸ عیار باید بماند
             "local_per_gram_18k": round(per_gram_18k, 2),   # گرم ۱۸ عیار (تومان)
+            # کمک به دیباگ (هیچ چیزی از امکانات کم نمی‌کند)
+            "mesghal_source": "ajax.json" if not mesghal_from_fallback else f"fallback_from_gram18*{MESGHAL_TO_GRAM_APPROX}",
         }
 
     # نسبت‌های تبدیل (برای بعداً، اگر لازم شد)
@@ -97,7 +127,7 @@ def main():
         fx["AEDUSD"] = round(aed_local / usd_local, 6)
     if try_local and try_local > 0:
         fx["TRYUSD"] = round(try_local / usd_local, 6)
-    if xau_struct:
+    if xau_struct and xau_struct.get("local_per_ounce"):
         fx["XAUUSD"] = round(xau_struct["local_per_ounce"] / usd_local, 4)
 
     # ساختار rates بر پایه تومان
@@ -112,6 +142,15 @@ def main():
         rates["CNY"] = round(cny_local, 2)
     if try_local and try_local > 0:
         rates["TRY"] = round(try_local, 2)
+
+    # ✅ ۱۸ عیار را حذف نمی‌کنیم: هم داخل XAU_struct هست، هم می‌توانیم جداگانه نگه داریم
+    if gram18_local and gram18_local > 0:
+        rates["GRAM18"] = round(gram18_local, 2)  # تومان برای هر گرم ۱۸ عیار (اختیاری اما مفید)
+
+    # ✅ مثقال به عنوان یک نرخ مستقل (برای مصرف ساده‌تر در افزونه)
+    if mesghal_local and mesghal_local > 0:
+        rates["MESGHAL"] = round(mesghal_local, 2)
+
     if xau_struct:
         rates["XAU"] = xau_struct
     if fx:
