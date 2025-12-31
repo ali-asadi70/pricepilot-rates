@@ -1,10 +1,58 @@
 import json
 import urllib.request
+import urllib.error
+import time
 
 TGJU_JSON_URL = "https://call1.tgju.org/ajax.json"
 
 # ضریب رایج مثقال شرعی (تقریباً) برای fallback
 MESGHAL_TO_GRAM_APPROX = 4.6083
+
+
+def fetch_tgju_json(url: str, timeout: int = 20, retries: int = 3, retry_delay_sec: float = 1.5) -> str:
+    """
+    دریافت JSON از TGJU با:
+    - cache-busting (پارامتر v با timestamp)
+    - هدرهای ضد کش + User-Agent
+    - retry در صورت خطا/timeout
+    """
+    last_err = None
+
+    for attempt in range(1, retries + 1):
+        # Cache busting: پارامتر v برای جلوگیری از پاسخ کش‌شده توسط CDN/Proxy
+        cache_bust = str(int(time.time() * 1000))
+        sep = "&" if "?" in url else "?"
+        final_url = f"{url}{sep}v={cache_bust}"
+
+        req = urllib.request.Request(
+            final_url,
+            headers={
+                "User-Agent": "Mozilla/5.0 (compatible; RatesUpdater/1.0)",
+                "Cache-Control": "no-cache",
+                "Pragma": "no-cache",
+                "Accept": "application/json,text/plain,*/*",
+            },
+            method="GET",
+        )
+
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                # resp.status در urllib همیشه نیست، ولی در CPython معمولاً هست
+                status = getattr(resp, "status", 200)
+                if status != 200:
+                    raise RuntimeError(f"TGJU HTTP status {status}")
+                return resp.read().decode("utf-8")
+
+        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, RuntimeError) as e:
+            last_err = e
+            # اگر آخرین تلاش نیست، کمی صبر کن و دوباره امتحان کن
+            if attempt < retries:
+                time.sleep(retry_delay_sec)
+            else:
+                raise RuntimeError(f"Failed to fetch TGJU JSON after {retries} attempts. Last error: {e}") from e
+
+    # عملاً به اینجا نمی‌رسیم، ولی برای اطمینان:
+    raise RuntimeError(f"Failed to fetch TGJU JSON. Last error: {last_err}")
 
 
 def get_symbol_price(current, symbol_key):
@@ -45,11 +93,8 @@ def to_toman(value):
 
 def main():
     print("Fetching data from TGJU ...")
-    # ۱) گرفتن JSON از tgju
-    with urllib.request.urlopen(TGJU_JSON_URL, timeout=20) as resp:
-        if resp.status != 200:
-            raise RuntimeError(f"TGJU HTTP status {resp.status}")
-        raw = resp.read().decode("utf-8")
+    # ۱) گرفتن JSON از tgju (با cache-busting + headers + retry)
+    raw = fetch_tgju_json(TGJU_JSON_URL, timeout=20, retries=3, retry_delay_sec=1.5)
 
     data = json.loads(raw)
 
