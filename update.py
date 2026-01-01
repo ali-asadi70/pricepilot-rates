@@ -3,7 +3,6 @@ import urllib.request
 import urllib.error
 import time
 import os  # برای چک وجود فایل قبلی
-import requests  # برای API جدید (نصب با pip install requests اگر لازم)
 
 TGJU_JSON_URL = "https://call1.tgju.org/ajax.json"
 
@@ -57,25 +56,52 @@ def fetch_tgju_json(url: str, timeout: int = 20, retries: int = 3, retry_delay_s
     raise RuntimeError(f"Failed to fetch TGJU JSON. Last error: {last_err}")
 
 
-def fetch_metals_gold():
+def fetch_metals_gold(timeout: int = 10, retries: int = 2) -> dict:
     """
-    دریافت قیمت طلا از API جایگزین (metals.live).
-    برمی‌گرداند: usd_per_ounce, local_per_gram_24k (اگر USD موجود باشه، محاسبه محلی).
+    دریافت قیمت طلا از API جایگزین (metals.live) با urllib (بدون requests).
+    برمی‌گرداند: {'usd_per_ounce': float, 'source': 'metals.live'} یا None اگر fail.
     """
-    try:
-        resp = requests.get(METALS_API_URL, timeout=10, headers={"User-Agent": "RatesUpdater/1.0"})
-        if resp.status_code == 200:
-            data = resp.json()
-            xau_usd = data.get("XAU", {}).get("price", 0)  # قیمت spot XAU به USD
-            if xau_usd > 0:
-                print("Using fallback API for gold: metals.live")
-                return {
-                    "usd_per_ounce": round(xau_usd, 2),
-                    "source": "metals.live",
-                    # می‌تونیم mesghal و gram18 رو هم محاسبه کنیم اگر لازم (بر اساس XAU + USD)
-                }
-    except Exception as e:
-        print(f"Fallback API error: {e} - using local calculation")
+    last_err = None
+
+    for attempt in range(1, retries + 1):
+        # Cache busting برای API جدید هم
+        cache_bust = str(int(time.time() * 1000))
+        sep = "&" if "?" in METALS_API_URL else "?"
+        final_url = f"{METALS_API_URL}{sep}v={cache_bust}"
+
+        req = urllib.request.Request(
+            final_url,
+            headers={
+                "User-Agent": "Mozilla/5.0 (compatible; RatesUpdater/1.0)",
+                "Cache-Control": "no-cache",
+                "Accept": "application/json",
+            },
+            method="GET",
+        )
+
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                status = getattr(resp, "status", 200)
+                if status != 200:
+                    raise RuntimeError(f"Metals API HTTP status {status}")
+                raw = resp.read().decode("utf-8")
+                data = json.loads(raw)
+                xau_data = data.get("XAU", {})
+                xau_usd = xau_data.get("price", 0)
+                if xau_usd > 0:
+                    print("Using fallback API for gold: metals.live")
+                    return {
+                        "usd_per_ounce": round(xau_usd, 2),
+                        "source": "metals.live",
+                    }
+        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, json.JSONDecodeError, RuntimeError) as e:
+            last_err = e
+            if attempt < retries:
+                time.sleep(0.5)
+            else:
+                print(f"Fallback API error after {retries} attempts: {e} - using local calculation")
+                return None
+
     return None
 
 
@@ -190,7 +216,7 @@ def main():
     # اگر شرط برقرار (تغییر نکرده)، از API جایگزین بگیر
     fallback_gold = None
     if use_fallback:
-        fallback_gold = fetch_metals_gold()
+        fallback_gold = fetch_metals_gold(timeout=10, retries=2)
         if fallback_gold:
             # محاسبه محلی بر اساس XAUUSD جدید (برای سازگاری با ساختار)
             usd_per_ounce_new = fallback_gold["usd_per_ounce"]
@@ -203,7 +229,7 @@ def main():
 
             # override مقادیر طلا
             gram18_local = per_gram_18k_new
-            mesghal_local = to_toman(mesghal_rial) if mesghal_rial else mesghal_local_new
+            # mesghal_local رو بعداً set می‌کنیم
 
     # fallback مثقال اگر مستقیم پیدا نشد
     mesghal_local = to_toman(mesghal_rial)
@@ -211,6 +237,8 @@ def main():
     if (mesghal_local is None or mesghal_local <= 0) and (gram18_local and gram18_local > 0):
         mesghal_local = gram18_local * MESGHAL_TO_GRAM_APPROX
         mesghal_from_fallback = True
+    elif fallback_gold:  # اگر fallback استفاده شد، mesghal رو هم ازش محاسبه کن
+        mesghal_local = gram18_local * MESGHAL_TO_GRAM_APPROX  # بر اساس gram18 جدید
 
     # محاسبه XAU (با استفاده از مقادیر آپدیت‌شده)
     xau_struct = None
