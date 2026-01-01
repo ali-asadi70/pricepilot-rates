@@ -2,12 +2,17 @@ import json
 import urllib.request
 import urllib.error
 import time
+import os  # برای چک وجود فایل قبلی
+import requests  # برای API جدید (نصب با pip install requests اگر لازم)
 
 TGJU_JSON_URL = "https://call1.tgju.org/ajax.json"
 
 # ضریب رایج مثقال شرعی (تقریباً) برای fallback
 MESGHAL_TO_GRAM_APPROX = 4.6083
 
+# API جایگزین برای طلا (metals.live - رایگان و real-time)
+METALS_API_URL = "https://api.metals.live/v1/spot/all"
+GOLD_TOLERANCE_PERCENT = 0.1  # اگر تغییر کمتر از ۰.۱% باشه، به عنوان "ثابت" در نظر بگیر
 
 def fetch_tgju_json(url: str, timeout: int = 20, retries: int = 3, retry_delay_sec: float = 1.5) -> str:
     """
@@ -37,7 +42,6 @@ def fetch_tgju_json(url: str, timeout: int = 20, retries: int = 3, retry_delay_s
 
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
-                # resp.status در urllib همیشه نیست، ولی در CPython معمولاً هست
                 status = getattr(resp, "status", 200)
                 if status != 200:
                     raise RuntimeError(f"TGJU HTTP status {status}")
@@ -45,14 +49,34 @@ def fetch_tgju_json(url: str, timeout: int = 20, retries: int = 3, retry_delay_s
 
         except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, RuntimeError) as e:
             last_err = e
-            # اگر آخرین تلاش نیست، کمی صبر کن و دوباره امتحان کن
             if attempt < retries:
                 time.sleep(retry_delay_sec)
             else:
                 raise RuntimeError(f"Failed to fetch TGJU JSON after {retries} attempts. Last error: {e}") from e
 
-    # عملاً به اینجا نمی‌رسیم، ولی برای اطمینان:
     raise RuntimeError(f"Failed to fetch TGJU JSON. Last error: {last_err}")
+
+
+def fetch_metals_gold():
+    """
+    دریافت قیمت طلا از API جایگزین (metals.live).
+    برمی‌گرداند: usd_per_ounce, local_per_gram_24k (اگر USD موجود باشه، محاسبه محلی).
+    """
+    try:
+        resp = requests.get(METALS_API_URL, timeout=10, headers={"User-Agent": "RatesUpdater/1.0"})
+        if resp.status_code == 200:
+            data = resp.json()
+            xau_usd = data.get("XAU", {}).get("price", 0)  # قیمت spot XAU به USD
+            if xau_usd > 0:
+                print("Using fallback API for gold: metals.live")
+                return {
+                    "usd_per_ounce": round(xau_usd, 2),
+                    "source": "metals.live",
+                    # می‌تونیم mesghal و gram18 رو هم محاسبه کنیم اگر لازم (بر اساس XAU + USD)
+                }
+    except Exception as e:
+        print(f"Fallback API error: {e} - using local calculation")
+    return None
 
 
 def get_symbol_price(current, symbol_key):
@@ -61,7 +85,6 @@ def get_symbol_price(current, symbol_key):
     اگر symbol_key لیست باشد، به ترتیب هر کلید را امتحان می‌کند
     و اولین مقداری که پیدا شد را برمی‌گرداند.
     """
-    # اگر symbol_key یک iterable از کلیدهاست، آنها را یکی‌یکی امتحان کن
     if isinstance(symbol_key, (list, tuple)):
         for key in symbol_key:
             val = get_symbol_price(current, key)
@@ -69,7 +92,6 @@ def get_symbol_price(current, symbol_key):
                 return val
         return None
 
-    # در حالت عادی symbol_key یک رشته است
     item = current.get(symbol_key)
     if not item:
         return None
@@ -91,80 +113,125 @@ def to_toman(value):
     return value / 100.0
 
 
+def load_previous_rates():
+    """بارگذاری rates.json قبلی برای مقایسه تغییر قیمت طلا."""
+    if os.path.exists("rates.json"):
+        try:
+            with open("rates.json", "r", encoding="utf-8") as f:
+                data = json.load(f)
+                prev_rates = data.get("rates", {})
+                prev_xau = prev_rates.get("XAU", {})
+                return {
+                    "gram18": prev_rates.get("GRAM18"),
+                    "mesghal": prev_rates.get("MESGHAL"),
+                    "xau_usd": prev_xau.get("usd_per_ounce") if prev_xau else None,
+                }
+        except:
+            pass
+    return {}
+
+
+def has_gold_changed(new_gram18, prev_data, tolerance_percent=0.1):
+    """
+    چک می‌کنه آیا قیمت gram18 تغییر کرده یا نه (با tolerance برای نوسانهای ریز).
+    اگر None باشه یا تغییر کمتر از tolerance، False برمی‌گردونه (یعنی "تغییر نکرده").
+    """
+    prev_gram18 = prev_data.get("gram18")
+    if new_gram18 is None or prev_gram18 is None:
+        return False  # بدون تغییر (یا موجود نیست)
+    
+    change_percent = abs((new_gram18 - prev_gram18) / prev_gram18 * 100)
+    return change_percent >= tolerance_percent  # اگر تغییر >= tolerance، True (تغییر کرده)
+
+
 def main():
     print("Fetching data from TGJU ...")
-    # ۱) گرفتن JSON از tgju (با cache-busting + headers + retry)
+    # ۱) گرفتن JSON از tgju (مثل قبل)
     raw = fetch_tgju_json(TGJU_JSON_URL, timeout=20, retries=3, retry_delay_sec=1.5)
-
     data = json.loads(raw)
-
-    # معمولاً data["current"] داریم
     current = data.get("current") or data
 
-    # ⚠ اگر اسم کلیدها فرق داشت، ما چند گزینه را امتحان می‌کنیم
-    usd_rial = get_symbol_price(current, ["price_dollar_rl", "price_dollar", "price_dollar_rl2"])
+    # بارگذاری rates قبلی برای مقایسه طلا
+    prev_rates = load_previous_rates()
+    print(f"Previous gold prices: GRAM18={prev_rates.get('gram18')}, XAUUSD={prev_rates.get('xau_usd')}")
+
+    # گرفتن نرخ‌های ارزها از TGJU (بدون تغییر)
+    usd_rial = get_symbol_price(current, ["price_dollar_rls", "price_dollar_rl", "price_dollar", "price_dollar_rl2"])
     eur_rial = get_symbol_price(current, ["price_eur", "price_euro", "price_eur_rl"])
     aed_rial = get_symbol_price(current, ["price_aed", "price_dirham", "price_aed_rl"])
     cny_rial = get_symbol_price(current, ["price_cny", "price_yuan", "price_cny_rl"])
-    # اضافه: تلاش برای پیدا کردن قیمت لیر (TRY) با چند کلید محتمل
     try_rial = get_symbol_price(current, ["price_try", "price_tl", "price_toman_try", "price_tl_rl"])
 
-    # طلا ۱۸ عیار (باید بماند)
-    gram18_rial = get_symbol_price(current, ["geram18", "gram18", "geram_18", "gram18_rl"])
-
-    # ✅ مثقال طلا (جایگزین ۲۴ عیار در خروجی)
-    # چون کلید دقیق ممکن است بسته به نسخه‌ها متفاوت باشد، چند حالت محتمل:
+    # طلا از TGJU
+    gram18_rial = get_symbol_price(current, ["geram18_rl", "tala_geram18", "price_geram18", "geram18", "gram18", "geram_18", "gram18_rl"])
     mesghal_rial = get_symbol_price(
         current,
         [
-            "mesghal", "mesghal_tala", "mesghal_gold", "mesghal18",
-            "mazanne", "mozanne", "mozanneh", "mashghal",
-            "price_mesghal", "price_mesghal_rl", "mesghal_rl"
+            "mesghal_rl", "tala_mesghal", "price_mesghal", "mesghal", "mazanne", "mozanne", "mozanneh", "mashghal",
+            "mesghal_tala", "mesghal_gold", "mesghal18", "price_mesghal_rl", "mesghal_rl"
         ]
     )
 
     if usd_rial is None:
         raise RuntimeError("Could not read USD price from TGJU (check symbol_key for USD).")
 
-    # تبدیل همه‌چیز به تومان
+    # تبدیل همه‌چیز به تومان (بدون تغییر برای غیرطلا)
     usd_local = to_toman(usd_rial)
     eur_local = to_toman(eur_rial)
     aed_local = to_toman(aed_rial)
     cny_local = to_toman(cny_rial)
     try_local = to_toman(try_rial)
-    gram18_local = to_toman(gram18_rial)
-    mesghal_local = to_toman(mesghal_rial)
 
-    # اگر مثقال مستقیم از TGJU پیدا نشد، برای اینکه سیستم از کار نیفته،
-    # یک fallback تقریباً نزدیک از روی گرم ۱۸ عیار می‌سازیم.
-    # (مسیر اصلی همچنان ajax.json است؛ این فقط کمک اضطراری است.)
+    # چک شرط برای طلا: اگر gram18 تغییر نکرده، از API جدید بگیر
+    gram18_local = to_toman(gram18_rial)
+    use_fallback = not has_gold_changed(gram18_local, prev_rates)
+    print(f"GRAM18 from TGJU: {gram18_local}, Changed? {not use_fallback}")
+
+    # اگر شرط برقرار (تغییر نکرده)، از API جایگزین بگیر
+    fallback_gold = None
+    if use_fallback:
+        fallback_gold = fetch_metals_gold()
+        if fallback_gold:
+            # محاسبه محلی بر اساس XAUUSD جدید (برای سازگاری با ساختار)
+            usd_per_ounce_new = fallback_gold["usd_per_ounce"]
+            # local_per_ounce = usd_per_ounce * usd_local (تومان برای اونس)
+            per_ounce_local_new = usd_per_ounce_new * usd_local
+            # back-calculate gram24k و gram18k (برای GRAM18 و MESGHAL)
+            per_gram_24k_new = per_ounce_local_new / 31.1034768
+            per_gram_18k_new = per_gram_24k_new * (18.0 / 24.0)
+            mesghal_local_new = per_gram_18k_new * MESGHAL_TO_GRAM_APPROX  # تقریبی
+
+            # override مقادیر طلا
+            gram18_local = per_gram_18k_new
+            mesghal_local = to_toman(mesghal_rial) if mesghal_rial else mesghal_local_new
+
+    # fallback مثقال اگر مستقیم پیدا نشد
+    mesghal_local = to_toman(mesghal_rial)
     mesghal_from_fallback = False
     if (mesghal_local is None or mesghal_local <= 0) and (gram18_local and gram18_local > 0):
         mesghal_local = gram18_local * MESGHAL_TO_GRAM_APPROX
         mesghal_from_fallback = True
 
-    # محاسبه طلا بر اساس قیمت ۱۸ عیار به تومان (برای اونس و XAUUSD و ...)
+    # محاسبه XAU (با استفاده از مقادیر آپدیت‌شده)
     xau_struct = None
     if gram18_local and gram18_local > 0:
         per_gram_18k = gram18_local
-        # همچنان برای محاسبه اونس نیاز داریم 24k را "داخلی" حساب کنیم،
-        # اما دیگر در خروجی به عنوان نرخ/واحد نمایش داده نمی‌شود.
         per_gram_24k_internal = per_gram_18k * (24.0 / 18.0)
-        per_ounce_local = per_gram_24k_internal * 31.1034768  # تومان برای هر اونس
-        usd_per_ounce = per_ounce_local / usd_local  # قیمت اونس به دلار
+        per_ounce_local = per_gram_24k_internal * 31.1034768
+        usd_per_ounce = per_ounce_local / usd_local
 
         xau_struct = {
-            "usd_per_ounce": round(usd_per_ounce, 2),       # اونس بر حسب دلار
-            "local_per_ounce": round(per_ounce_local, 2),   # اونس بر حسب تومان
-            # ✅ ۲۴ عیار حذف شد و به جایش مثقال آمد
+            "usd_per_ounce": round(usd_per_ounce, 2),
+            "local_per_ounce": round(per_ounce_local, 2),
             "local_per_mesghal": round(mesghal_local, 2) if mesghal_local else None,
-            # ۱۸ عیار باید بماند
-            "local_per_gram_18k": round(per_gram_18k, 2),   # گرم ۱۸ عیار (تومان)
-            # کمک به دیباگ (هیچ چیزی از امکانات کم نمی‌کند)
-            "mesghal_source": "ajax.json" if not mesghal_from_fallback else f"fallback_from_gram18*{MESGHAL_TO_GRAM_APPROX}",
+            "local_per_gram_18k": round(per_gram_18k, 2),
+            "mesghal_source": fallback_gold.get("source", "ajax.json") if fallback_gold else ("ajax.json" if not mesghal_from_fallback else f"fallback_from_gram18*{MESGHAL_TO_GRAM_APPROX}"),
         }
+        # اگر fallback استفاده شد، usd_per_ounce رو از API جدید override کن
+        if fallback_gold:
+            xau_struct["usd_per_ounce"] = fallback_gold["usd_per_ounce"]
 
-    # نسبت‌های تبدیل (برای بعداً، اگر لازم شد)
+    # نسبت‌های تبدیل (بدون تغییر)
     fx = {}
     if eur_local and eur_local > 0:
         fx["EURUSD"] = round(eur_local / usd_local, 6)
@@ -175,7 +242,7 @@ def main():
     if xau_struct and xau_struct.get("local_per_ounce"):
         fx["XAUUSD"] = round(xau_struct["local_per_ounce"] / usd_local, 4)
 
-    # ساختار rates بر پایه تومان
+    # ساختار rates (بدون تغییر برای غیرطلا)
     rates = {
         "USD": round(usd_local, 2),
     }
@@ -188,22 +255,20 @@ def main():
     if try_local and try_local > 0:
         rates["TRY"] = round(try_local, 2)
 
-    # ✅ ۱۸ عیار را حذف نمی‌کنیم: هم داخل XAU_struct هست، هم می‌توانیم جداگانه نگه داریم
     if gram18_local and gram18_local > 0:
-        rates["GRAM18"] = round(gram18_local, 2)  # تومان برای هر گرم ۱۸ عیار (اختیاری اما مفید)
+        rates["GRAM18"] = round(gram18_local, 2)
 
-    # ✅ مثقال به عنوان یک نرخ مستقل (برای مصرف ساده‌تر در افزونه)
     if mesghal_local and mesghal_local > 0:
         rates["MESGHAL"] = round(mesghal_local, 2)
 
     if xau_struct:
         rates["XAU"] = xau_struct
     if fx:
-        rates["FX"] = fx  # فعلاً افزونه استفاده نمی‌کند، ولی برای آینده خوب است
+        rates["FX"] = fx
 
     payload = {
         "success": True,
-        "source": "tgju.org unofficial ajax.json (Toman)",
+        "source": "tgju.org unofficial ajax.json (Toman) + metals.live fallback for gold",
         "rates": rates,
     }
 
@@ -211,6 +276,8 @@ def main():
         json.dump(payload, f, ensure_ascii=False, indent=2)
 
     print("rates.json updated successfully.")
+    if fallback_gold:
+        print("Gold updated from fallback API!")
 
 
 if __name__ == "__main__":
