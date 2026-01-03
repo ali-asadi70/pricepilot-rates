@@ -5,38 +5,35 @@ on:
     - cron: "*/5 * * * *"
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 jobs:
   update:
     runs-on: ubuntu-latest
-
+    
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v3
-
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.11'
-
-    - name: Run update script
-      run: python update.py
-
-    - name: Commit changes
-      run: |
-        git config --local user.email "auto@github.com"
-        git config --local user.name "Auto Updater"
-
-        # فقط اگر فایل عوض شده باشد، کامیت و پوش انجام بده
-        git add rates.json
-
-        if git diff --cached --quiet; then
-          echo "No changes to commit, skip push"
-        else
-          git commit -m "Auto update rates"
-          # برای اطمینان، آخرین تغییرات ریموت را می‌گیرد
-          git pull --rebase origin main
-          git push origin HEAD:main
-        fi
+      - name: Checkout repository
+        uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Run update script
+        run: python update.py
+      
+      - name: Commit changes
+        run: |
+          git config --local user.email "auto@github.com"
+          git config --local user.name "Auto Updater"
+          
+          # فقط اگر فایل عوض شده باشد، کامیت و پوش انجام بده
+          git add rates.json
+          
+          if git diff --cached --quiet; then
+            echo "No changes to commit, skip push"
+          else
+            git commit -m "Auto update rates"
+            # برای اطمینان، آخرین تغییرات ریموت را می‌گیرد
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi
