@@ -11,7 +11,7 @@ MESGHAL_TO_GRAM_APPROX = 4.6083
 
 # API جایگزین برای طلا (metals.live - رایگان و real-time)
 METALS_API_URL = "https://api.metals.live/v1/spot/all"
-GOLD_TOLERANCE_PERCENT = 0.1  # اگر تغییر کمتر از ۰.۱% باشه، به عنوان "ثابت" در نظر بگیر
+GOLD_TOLERANCE_PERCENT = 0.5  # افزایش به ۰.۵% برای فعال‌سازی بیشتر fallback
 
 def fetch_tgju_json(url: str, timeout: int = 20, retries: int = 3, retry_delay_sec: float = 1.5) -> str:
     """
@@ -89,17 +89,20 @@ def fetch_metals_gold(timeout: int = 10, retries: int = 2) -> dict:
                 xau_data = data.get("XAU", {})
                 xau_usd = xau_data.get("price", 0)
                 if xau_usd > 0:
-                    print("Using fallback API for gold: metals.live")
+                    print(f"DEBUG: Fallback API success - XAUUSD from metals.live: {xau_usd}")
                     return {
                         "usd_per_ounce": round(xau_usd, 2),
                         "source": "metals.live",
                     }
+                else:
+                    print(f"DEBUG: Fallback API returned invalid XAU price: {xau_usd}")
+                    return None
         except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, json.JSONDecodeError, RuntimeError) as e:
             last_err = e
             if attempt < retries:
                 time.sleep(0.5)
             else:
-                print(f"Fallback API error after {retries} attempts: {e} - using local calculation")
+                print(f"DEBUG: Fallback API failed after {retries} attempts: {e}")
                 return None
 
     return None
@@ -157,16 +160,18 @@ def load_previous_rates():
     return {}
 
 
-def has_gold_changed(new_gram18, prev_data, tolerance_percent=0.1):
+def has_gold_changed(new_gram18, prev_data, tolerance_percent=0.5):
     """
     چک می‌کنه آیا قیمت gram18 تغییر کرده یا نه (با tolerance برای نوسانهای ریز).
     اگر None باشه یا تغییر کمتر از tolerance، False برمی‌گردونه (یعنی "تغییر نکرده").
     """
     prev_gram18 = prev_data.get("gram18")
     if new_gram18 is None or prev_gram18 is None:
+        print(f"DEBUG: Gram18 previous: {prev_gram18}, new: {new_gram18} -> No change (None or missing)")
         return False  # بدون تغییر (یا موجود نیست)
     
     change_percent = abs((new_gram18 - prev_gram18) / prev_gram18 * 100)
+    print(f"DEBUG: Gram18 change: {change_percent:.3f}% (prev={prev_gram18}, new={new_gram18})")
     return change_percent >= tolerance_percent  # اگر تغییر >= tolerance، True (تغییر کرده)
 
 
@@ -208,14 +213,19 @@ def main():
     cny_local = to_toman(cny_rial)
     try_local = to_toman(try_rial)
 
+    print(f"DEBUG: USD local: {usd_local}")
+
     # چک شرط برای طلا: اگر gram18 تغییر نکرده، از API جدید بگیر
     gram18_local = to_toman(gram18_rial)
-    use_fallback = not has_gold_changed(gram18_local, prev_rates)
-    print(f"GRAM18 from TGJU: {gram18_local}, Changed? {not use_fallback}")
+    changed = has_gold_changed(gram18_local, prev_rates, GOLD_TOLERANCE_PERCENT)
+    FORCE_FALLBACK = False  # برای تست، True کن (همیشه fallback). بعد False کن.
+    use_fallback = FORCE_FALLBACK or not changed  # اگر force یا not changed، fallback
+    print(f"GRAM18 from TGJU: {gram18_local}, Changed? {changed} -> Use fallback? {use_fallback} (force={FORCE_FALLBACK})")
 
     # اگر شرط برقرار (تغییر نکرده)، از API جایگزین بگیر
     fallback_gold = None
     if use_fallback:
+        print("DEBUG: Activating fallback for gold...")
         fallback_gold = fetch_metals_gold(timeout=10, retries=2)
         if fallback_gold:
             # محاسبه محلی بر اساس XAUUSD جدید (برای سازگاری با ساختار)
@@ -229,7 +239,7 @@ def main():
 
             # override مقادیر طلا
             gram18_local = per_gram_18k_new
-            # mesghal_local رو بعداً set می‌کنیم
+            print(f"DEBUG: Overridden gram18: {gram18_local}, mesghal new: {mesghal_local_new}")
 
     # fallback مثقال اگر مستقیم پیدا نشد
     mesghal_local = to_toman(mesghal_rial)
@@ -246,7 +256,7 @@ def main():
         per_gram_18k = gram18_local
         per_gram_24k_internal = per_gram_18k * (24.0 / 18.0)
         per_ounce_local = per_gram_24k_internal * 31.1034768
-        usd_per_ounce = per_ounce_local / usd_local
+        usd_per_ounce = per_ounce_local / usd_local if usd_local > 0 else 0
 
         xau_struct = {
             "usd_per_ounce": round(usd_per_ounce, 2),
@@ -258,6 +268,8 @@ def main():
         # اگر fallback استفاده شد، usd_per_ounce رو از API جدید override کن
         if fallback_gold:
             xau_struct["usd_per_ounce"] = fallback_gold["usd_per_ounce"]
+
+    print(f"DEBUG: Final XAUUSD: {xau_struct['usd_per_ounce'] if xau_struct else 'None'}")
 
     # نسبت‌های تبدیل (بدون تغییر)
     fx = {}
