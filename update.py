@@ -218,7 +218,7 @@ def main():
     # چک شرط برای طلا: اگر gram18 تغییر نکرده، از API جدید بگیر
     gram18_local = to_toman(gram18_rial)
     changed = has_gold_changed(gram18_local, prev_rates, GOLD_TOLERANCE_PERCENT)
-    FORCE_FALLBACK = False  # برای تست، True کن (همیشه fallback). بعد False کن.
+    FORCE_FALLBACK = true  # برای تست، True کن (همیشه fallback). بعد False کن.
     use_fallback = FORCE_FALLBACK or not changed  # اگر force یا not changed، fallback
     print(f"GRAM18 from TGJU: {gram18_local}, Changed? {changed} -> Use fallback? {use_fallback} (force={FORCE_FALLBACK})")
 
