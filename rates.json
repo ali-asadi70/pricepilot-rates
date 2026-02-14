@@ -8,11 +8,11 @@
     "CNY": 2294.0,
     "TRY": 361.0,
     "GRAM18": 1858300.0,
-    "MESGHAL": 8050200.0,
+    "MESGHAL": 8049700.0,
     "XAU": {
       "usd_per_ounce": 4865.59,
       "local_per_ounce": 77066121.25,
-      "local_per_mesghal": 8050200.0,
+      "local_per_mesghal": 8049700.0,
       "local_per_gram_18k": 1858300.0,
       "mesghal_source": "ajax.json"
     },
