@@ -7,20 +7,20 @@
     "AED": 4357.4,
     "CNY": 2316.0,
     "TRY": 366.0,
-    "GRAM18": 1870540.0,
-    "MESGHAL": 8102600.0,
+    "GRAM18": 1869550.0,
+    "MESGHAL": 8099200.0,
     "XAU": {
-      "usd_per_ounce": 4849.57,
-      "local_per_ounce": 77573729.99,
-      "local_per_mesghal": 8102600.0,
-      "local_per_gram_18k": 1870540.0,
+      "usd_per_ounce": 4847.0,
+      "local_per_ounce": 77532673.4,
+      "local_per_mesghal": 8099200.0,
+      "local_per_gram_18k": 1869550.0,
       "mesghal_source": "ajax.json"
     },
     "FX": {
       "EURUSD": 1.185734,
       "AEDUSD": 0.272406,
       "TRYUSD": 0.022881,
-      "XAUUSD": 4849.5705
+      "XAUUSD": 4847.0038
     }
   }
 }
