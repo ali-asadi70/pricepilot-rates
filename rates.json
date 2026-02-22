@@ -3,24 +3,24 @@
   "source": "tgju.org unofficial ajax.json (Toman)",
   "rates": {
     "USD": 16404.0,
-    "EUR": 19337.0,
-    "AED": 4468.1,
-    "CNY": 2376.0,
+    "EUR": 19335.0,
+    "AED": 4467.6,
+    "CNY": 2375.0,
     "TRY": 374.0,
-    "GRAM18": 1975970.0,
-    "MESGHAL": 8560500.0,
+    "GRAM18": 1978480.0,
+    "MESGHAL": 8570100.0,
     "XAU": {
-      "usd_per_ounce": 4995.49,
-      "local_per_ounce": 81946049.4,
-      "local_per_mesghal": 8560500.0,
-      "local_per_gram_18k": 1975970.0,
+      "usd_per_ounce": 5001.84,
+      "local_per_ounce": 82050142.37,
+      "local_per_mesghal": 8570100.0,
+      "local_per_gram_18k": 1978480.0,
       "mesghal_source": "ajax.json"
     },
     "FX": {
-      "EURUSD": 1.178798,
-      "AEDUSD": 0.272379,
+      "EURUSD": 1.178676,
+      "AEDUSD": 0.272348,
       "TRYUSD": 0.022799,
-      "XAUUSD": 4995.4919
+      "XAUUSD": 5001.8375
     }
   }
 }
