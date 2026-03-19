@@ -3,7 +3,7 @@
   "source": "tgju.org unofficial ajax.json (Toman)",
   "rates": {
     "USD": 15769.0,
-    "EUR": 18062.0,
+    "EUR": 18095.0,
     "AED": 4295.0,
     "CNY": 2285.0,
     "TRY": 356.0,
@@ -17,7 +17,7 @@
       "mesghal_source": "ajax.json"
     },
     "FX": {
-      "EURUSD": 1.145412,
+      "EURUSD": 1.147505,
       "AEDUSD": 0.27237,
       "TRYUSD": 0.022576,
       "XAUUSD": 4707.5675
